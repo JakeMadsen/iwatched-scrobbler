@@ -1,0 +1,11 @@
+{
+  "name": "@iwatched-scrobbler/ui",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared UI pieces for iWatched scrobbler clients.",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo \"UI package build not configured yet.\"",
+    "test": "echo \"UI package tests not configured yet.\""
+  }
+}

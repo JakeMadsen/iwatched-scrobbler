@@ -1,0 +1,11 @@
+{
+  "name": "@iwatched-scrobbler/adapters",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared platform adapters for iWatched scrobbler clients.",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo \"Adapters build not configured yet.\"",
+    "test": "echo \"Adapters tests not configured yet.\""
+  }
+}

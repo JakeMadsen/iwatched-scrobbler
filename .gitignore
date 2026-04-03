@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+.vite/
+.parcel-cache/
+.output/
+.wxt/
+*.log
+.env
+.env.*
+!.env.example
+Thumbs.db
+.DS_Store

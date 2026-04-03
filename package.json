@@ -1,0 +1,22 @@
+{
+  "name": "iwatched-scrobbler",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Monorepo for the iWatched scrobbler clients and shared packages.",
+  "license": "MIT",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "echo \"Build pipeline not configured yet.\"",
+    "dev:desktop": "npm run dev --workspace @iwatched-scrobbler/desktop",
+    "dev:extension": "npm run dev --workspace @iwatched-scrobbler/extension",
+    "lint": "echo \"Linting not configured yet.\"",
+    "test": "echo \"Tests not configured yet.\""
+  },
+  "engines": {
+    "node": ">=20",
+    "npm": ">=10"
+  }
+}

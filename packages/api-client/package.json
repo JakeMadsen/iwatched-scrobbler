@@ -1,0 +1,11 @@
+{
+  "name": "@iwatched-scrobbler/api-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Shared API client for the iWatched scrobble API.",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo \"API client build not configured yet.\"",
+    "test": "echo \"API client tests not configured yet.\""
+  }
+}

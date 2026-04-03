@@ -1,0 +1,12 @@
+{
+  "name": "@iwatched-scrobbler/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Future desktop companion for the iWatched scrobbler.",
+  "license": "MIT",
+  "scripts": {
+    "build": "echo \"Desktop build not configured yet.\"",
+    "dev": "echo \"Desktop dev workflow not configured yet.\"",
+    "test": "echo \"Desktop tests not configured yet.\""
+  }
+}

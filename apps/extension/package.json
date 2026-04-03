@@ -1,0 +1,25 @@
+{
+  "name": "@iwatched-scrobbler/extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Browser extension client for the iWatched scrobbler.",
+  "license": "MIT",
+  "scripts": {
+    "build": "wxt build -b chrome",
+    "dev": "wxt -b chrome",
+    "postinstall": "wxt prepare",
+    "test": "echo \"Extension tests not configured yet.\""
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.39",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@wxt-dev/module-react": "^1.2.2",
+    "typescript": "^6.0.2",
+    "wxt": "^0.20.20"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}
