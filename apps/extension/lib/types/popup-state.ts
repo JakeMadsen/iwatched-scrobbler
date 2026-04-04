@@ -1,15 +1,7 @@
-export type SiteKey = "prime" | "unsupported";
-export type QueueItemState = "ready" | "hold" | "info";
+export type SiteKey = "prime" | "plex" | "unsupported";
 export type DetectedMediaType = "movie" | "show" | "unknown";
 export type IWatchedMatchType = "resolved" | "search" | "none";
-
-export interface MockSessionState {
-  connected: boolean;
-  mode: "mock";
-  displayName: string;
-  handle: string;
-  planLabel: string;
-}
+export type IWatchedTargetType = "movie" | "show" | "season" | "episode" | null;
 
 export interface SiteDetectionState {
   siteKey: SiteKey;
@@ -25,6 +17,7 @@ export interface SiteDetectionState {
   detectedEpisode: string | null;
   seriesTitle: string | null;
   episodeTitle: string | null;
+  releaseYear: number | null;
   seasonNumber: number | null;
   episodeNumber: number | null;
   progressPercent: number | null;
@@ -35,22 +28,15 @@ export interface SiteDetectionState {
   watchThresholdReason: string | null;
   iwatchedUrl: string | null;
   iwatchedMatchType: IWatchedMatchType;
+  iwatchedTmdbId: string | null;
+  iwatchedTargetType: IWatchedTargetType;
   feedbackTitle: string;
   feedbackDetail: string;
   updatedAt: number;
 }
 
-export interface QueuePreviewItem {
-  id: string;
-  title: string;
-  detail: string;
-  state: QueueItemState;
-}
-
 export interface PopupSnapshot {
-  session: MockSessionState;
   activeSite: SiteDetectionState;
-  queue: QueuePreviewItem[];
   tabTitle: string;
   refreshedAt: number;
 }

@@ -4,6 +4,7 @@ interface AccountMenuProps {
   connected: boolean;
   displayName: string;
   handle: string;
+  onOpenIWatched: () => void;
   onSignIn: () => void;
   onLogOut: () => void;
 }
@@ -12,6 +13,7 @@ export function AccountMenu({
   connected,
   displayName,
   handle,
+  onOpenIWatched,
   onSignIn,
   onLogOut
 }: AccountMenuProps) {
@@ -56,7 +58,7 @@ export function AccountMenu({
 
           <div className="account-menu__item account-menu__item--static" role="presentation">
             <span>State</span>
-            <strong>{connected ? "Mock connected" : "Signed out"}</strong>
+            <strong>{connected ? "Connected to iWatched" : "No active connection"}</strong>
           </div>
 
           <button
@@ -65,15 +67,19 @@ export function AccountMenu({
             role="menuitem"
             onClick={handlePrimaryAction}
           >
-            {connected ? "Log out (mock)" : "Sign in (mock)"}
+            {connected ? "Disconnect extension" : "Open sign-in"}
           </button>
 
           <button
             type="button"
             className="account-menu__item account-menu__item--muted"
             role="menuitem"
+            onClick={() => {
+              onOpenIWatched();
+              setOpen(false);
+            }}
           >
-            Account info
+            Open iWatched
           </button>
         </div>
       )}

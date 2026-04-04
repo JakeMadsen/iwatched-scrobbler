@@ -16,6 +16,7 @@ interface StructuredPrimeMetadata {
   movieTitle: string | null;
   seriesTitle: string | null;
   episodeTitle: string | null;
+  releaseYear: number | null;
   seasonNumber: number | null;
   episodeNumber: number | null;
 }
@@ -89,6 +90,12 @@ function readMeta(doc: Document, selector: string): string | null {
   return cleanPrimeTitle(element.content);
 }
 
+function readMetaContent(doc: Document, selector: string): string | null {
+  const element = doc.querySelector(selector);
+  if (!(element instanceof HTMLMetaElement)) return null;
+  return normalizeText(element.content);
+}
+
 function readDocumentTitle(value: string): string | null {
   return cleanPrimeTitle(value);
 }
@@ -119,6 +126,14 @@ function findPrimeSubtitle(doc: Document): string | null {
   if (!subtitle) return null;
   if (/customers also watched/i.test(subtitle)) return null;
   return subtitle;
+}
+
+function findPrimeDescription(doc: Document): string | null {
+  return (
+    readMetaContent(doc, "meta[property='og:description']") ||
+    readMetaContent(doc, "meta[name='description']") ||
+    readMetaContent(doc, "meta[name='twitter:description']")
+  );
 }
 
 function roundProgress(value: number): number {
@@ -324,6 +339,21 @@ function parseNumberish(...values: unknown[]): number | null {
   return null;
 }
 
+function parseYearValue(...values: unknown[]): number | null {
+  for (const value of values) {
+    const text = normalizeText(String(value || ""));
+    if (!text) continue;
+
+    const match = text.match(/\b(19|20)\d{2}\b/);
+    if (!match) continue;
+
+    const parsed = Number(match[0]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return null;
+}
+
 function extractStructuredPrimeMetadata(doc: Document): StructuredPrimeMetadata {
   const nodes = getJsonLdNodes(doc);
 
@@ -344,6 +374,12 @@ function extractStructuredPrimeMetadata(doc: Document): StructuredPrimeMetadata 
       movieTitle: null,
       seriesTitle: cleanPrimeTitle(String(partOfSeries?.name || "")),
       episodeTitle: cleanPrimeTitle(String(node.name || "")),
+      releaseYear: parseYearValue(
+        node.datePublished,
+        node.dateCreated,
+        node.startDate,
+        partOfSeries && (partOfSeries.datePublished || partOfSeries.startDate)
+      ),
       seasonNumber: parseNumberish(
         partOfSeason?.seasonNumber,
         partOfSeason?.position,
@@ -362,6 +398,7 @@ function extractStructuredPrimeMetadata(doc: Document): StructuredPrimeMetadata 
       movieTitle: cleanPrimeTitle(String(node.name || "")),
       seriesTitle: null,
       episodeTitle: null,
+      releaseYear: parseYearValue(node.datePublished, node.dateCreated, node.startDate),
       seasonNumber: null,
       episodeNumber: null
     };
@@ -376,6 +413,7 @@ function extractStructuredPrimeMetadata(doc: Document): StructuredPrimeMetadata 
       movieTitle: null,
       seriesTitle: cleanPrimeTitle(String(node.name || "")),
       episodeTitle: null,
+      releaseYear: parseYearValue(node.datePublished, node.dateCreated, node.startDate),
       seasonNumber: null,
       episodeNumber: null
     };
@@ -386,9 +424,24 @@ function extractStructuredPrimeMetadata(doc: Document): StructuredPrimeMetadata 
     movieTitle: null,
     seriesTitle: null,
     episodeTitle: null,
+    releaseYear: null,
     seasonNumber: null,
     episodeNumber: null
   };
+}
+
+function extractMetaMediaType(doc: Document): "movie" | "show" | "unknown" {
+  const content = (
+    readMetaContent(doc, "meta[property='og:type']") ||
+    readMetaContent(doc, "meta[name='twitter:card']")
+  )?.toLowerCase();
+
+  if (!content) return "unknown";
+  if (content.includes("episode") || content.includes("series") || content.includes("tv")) {
+    return "show";
+  }
+  if (content.includes("movie")) return "movie";
+  return "unknown";
 }
 
 function parseEpisodeDescriptor(value?: string | null): ParsedEpisodeDescriptor {
@@ -480,12 +533,14 @@ function subtitleSuggestsSeries(subtitle: string | null, title: string | null): 
   if (cleanedTitle && cleanedSubtitle === cleanedTitle) return false;
 
   if (/\bseason\b/i.test(cleanedSubtitle)) return true;
+  if (/\bseasons\b/i.test(cleanedSubtitle)) return true;
   if (/\bepisode\b/i.test(cleanedSubtitle)) return true;
+  if (/\bepisodes\b/i.test(cleanedSubtitle)) return true;
   if (/\bs\d+\s*e\d+\b/i.test(cleanedSubtitle)) return true;
   if (/\b\d+x\d+\b/i.test(cleanedSubtitle)) return true;
-  if (cleanedSubtitle.includes(":")) return true;
-
-  return cleanedSubtitle.length > 0;
+  if (/\btv\s*series\b/i.test(cleanedSubtitle)) return true;
+  if (/\bseries\b/i.test(cleanedSubtitle)) return true;
+  return false;
 }
 
 function extractSeriesTitleFromSeasonTitle(value?: string | null): string | null {
@@ -545,22 +600,25 @@ function collectPageLevelSeriesSignals(
   domSubtitle: string | null
 ): PageLevelSeriesSignals {
   const titleSeason = parseEpisodeDescriptor(doc.title);
+  const domTitleParsed = parseEpisodeDescriptor(domTitle);
   const domSubtitleParsed = parseEpisodeDescriptor(domSubtitle);
-  const pageText = doc.body?.innerText || doc.documentElement?.textContent || "";
-  const html = doc.documentElement?.outerHTML || "";
+  const description = findPrimeDescription(doc);
+  const descriptionParsed = parseEpisodeDescriptor(description);
   const seasonNumber =
     titleSeason.seasonNumber ??
+    domTitleParsed.seasonNumber ??
     domSubtitleParsed.seasonNumber ??
-    findSeasonNumberInText(pageText) ??
-    findSeasonNumberInText(html);
+    descriptionParsed.seasonNumber ??
+    findSeasonNumberInText(description);
   const episodeNumber =
     domSubtitleParsed.episodeNumber ??
+    domTitleParsed.episodeNumber ??
     titleSeason.episodeNumber ??
-    findEpisodeNumberInText(pageText) ??
-    findEpisodeNumberInText(html);
+    descriptionParsed.episodeNumber ??
+    findEpisodeNumberInText(description);
   const seriesTitle =
-    extractSeriesTitleFromSeasonTitle(doc.title) ||
     extractSeriesTitleFromSeasonTitle(domTitle) ||
+    extractSeriesTitleFromSeasonTitle(doc.title) ||
     domTitle;
 
   return {
@@ -568,6 +626,17 @@ function collectPageLevelSeriesSignals(
     seasonNumber,
     episodeNumber
   };
+}
+
+function findPageReleaseYear(doc: Document): number | null {
+  return parseYearValue(
+    readMetaContent(doc, "meta[property='video:release_date']"),
+    readMetaContent(doc, "meta[property='og:video:release_date']"),
+    readMetaContent(doc, "meta[name='release_date']"),
+    readMetaContent(doc, "meta[itemprop='datePublished']"),
+    findPrimeDescription(doc),
+    doc.title
+  );
 }
 
 function createBaseState(rawUrl?: string | null): Pick<
@@ -585,6 +654,7 @@ function createBaseState(rawUrl?: string | null): Pick<
   | "detectedEpisode"
   | "seriesTitle"
   | "episodeTitle"
+  | "releaseYear"
   | "seasonNumber"
   | "episodeNumber"
   | "progressPercent"
@@ -612,6 +682,7 @@ function createBaseState(rawUrl?: string | null): Pick<
     detectedEpisode: null,
     seriesTitle: null,
     episodeTitle: null,
+    releaseYear: null,
     seasonNumber: null,
     episodeNumber: null,
     progressPercent: null,
@@ -621,15 +692,17 @@ function createBaseState(rawUrl?: string | null): Pick<
     watchThresholdMet: false,
     watchThresholdReason: null,
     iwatchedUrl: null,
-    iwatchedMatchType: "none"
+    iwatchedMatchType: "none",
+    iwatchedTmdbId: null,
+    iwatchedTargetType: null
   };
 }
 
 export function createUnsupportedSiteState(rawUrl?: string | null): SiteDetectionState {
   return {
     ...createBaseState(rawUrl),
-    feedbackTitle: "Prime not active",
-    feedbackDetail: "Open Prime Video in this browser tab to start building a scrobble candidate.",
+    feedbackTitle: "Supported site not active",
+    feedbackDetail: "Open Prime Video or Plex in this browser tab to start building a scrobble candidate.",
     updatedAt: Date.now()
   };
 }
@@ -654,24 +727,32 @@ export function detectPrimeState(doc: Document, rawUrl: string): SiteDetectionSt
   const video = selectPrimeVideo(doc);
   const domTitle = findPrimeTitle(doc);
   const domSubtitle = findPrimeSubtitle(doc);
+  const domDescription = findPrimeDescription(doc);
   const structured = extractStructuredPrimeMetadata(doc);
+  const metaMediaType = extractMetaMediaType(doc);
   const parsedSubtitle = parseEpisodeDescriptor(domSubtitle);
+  const parsedDomTitle = parseEpisodeDescriptor(domTitle);
   const parsedTitle = parseEpisodeDescriptor(doc.title);
   const pageLevelSignals = collectPageLevelSeriesSignals(doc, domTitle, domSubtitle);
   const hasShowSignals =
-    structured.mediaType === "show" ||
     parsedSubtitle.seasonNumber != null ||
     parsedSubtitle.episodeNumber != null ||
+    parsedDomTitle.seasonNumber != null ||
+    parsedDomTitle.episodeNumber != null ||
     parsedTitle.seasonNumber != null ||
     parsedTitle.episodeNumber != null ||
     pageLevelSignals.seasonNumber != null ||
     pageLevelSignals.episodeNumber != null ||
     !!structured.episodeTitle ||
     !!structured.seriesTitle ||
-    subtitleSuggestsSeries(domSubtitle, domTitle);
+    subtitleSuggestsSeries(domSubtitle, domTitle) ||
+    subtitleSuggestsSeries(domDescription, domTitle);
 
-  const mediaType = structured.mediaType !== "unknown"
+  const mediaTypeHint = structured.mediaType !== "unknown"
     ? structured.mediaType
+    : metaMediaType;
+  const mediaType = mediaTypeHint !== "unknown"
+    ? mediaTypeHint
     : hasShowSignals
       ? "show"
       : "movie";
@@ -684,14 +765,19 @@ export function detectPrimeState(doc: Document, rawUrl: string): SiteDetectionSt
     structured.episodeTitle ||
     parsedSubtitle.episodeTitle ||
     (mediaType === "show" && domSubtitle && domSubtitle !== domTitle ? domSubtitle : null);
+  const releaseYear =
+    structured.releaseYear ??
+    findPageReleaseYear(doc);
   const seasonNumber =
     structured.seasonNumber ??
     parsedSubtitle.seasonNumber ??
+    parsedDomTitle.seasonNumber ??
     parsedTitle.seasonNumber ??
     pageLevelSignals.seasonNumber;
   const episodeNumber =
     structured.episodeNumber ??
     parsedSubtitle.episodeNumber ??
+    parsedDomTitle.episodeNumber ??
     parsedTitle.episodeNumber ??
     pageLevelSignals.episodeNumber;
   const detectedTitle =
@@ -752,10 +838,10 @@ export function detectPrimeState(doc: Document, rawUrl: string): SiteDetectionSt
     "Start a title and the extension will turn the current player state into a scrobble candidate.";
 
   if (detectedTitle && watchThresholdMet) {
-    feedbackTitle = "Ready to mark watched";
+    feedbackTitle = "Ready to add to timeline";
     feedbackDetail = watchThresholdReason
-      ? `Detected ${detectedTitle}. Local watched rule met: ${watchThresholdReason.toLowerCase()}.`
-      : `Detected ${detectedTitle}. Local watched rule met.`;
+      ? `Detected ${detectedTitle}. Local watch rule met: ${watchThresholdReason.toLowerCase()}.`
+      : `Detected ${detectedTitle}. Local watch rule met.`;
   } else if (detectedTitle && video && isPlaying) {
     feedbackTitle = "Playback active";
     feedbackDetail = `Detected ${detectedTitle} in active playback.`;
@@ -781,6 +867,7 @@ export function detectPrimeState(doc: Document, rawUrl: string): SiteDetectionSt
     detectedEpisode,
     seriesTitle,
     episodeTitle,
+    releaseYear,
     seasonNumber,
     episodeNumber,
     progressPercent,
@@ -791,6 +878,8 @@ export function detectPrimeState(doc: Document, rawUrl: string): SiteDetectionSt
     watchThresholdReason,
     iwatchedUrl: null,
     iwatchedMatchType: "none",
+    iwatchedTmdbId: null,
+    iwatchedTargetType: null,
     feedbackTitle,
     feedbackDetail,
     updatedAt: Date.now()

@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "Shared API client for the iWatched scrobble API.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "license": "MIT",
   "scripts": {
     "build": "echo \"API client build not configured yet.\"",

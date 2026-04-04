@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { PopupSnapshot } from "../../lib/types/popup-state";
 import { AccountMenu } from "./components/AccountMenu";
 import { BottomNav } from "./components/BottomNav";
+import { useIWatchedSession } from "./hooks/useIWatchedSession";
 import { usePopupSnapshot } from "./hooks/usePopupSnapshot";
+import { useReviewQueue } from "./hooks/useReviewQueue";
 import { DisclaimerView } from "./views/DisclaimerView";
 import { QueueView } from "./views/QueueView";
+import { SignInView } from "./views/SignInView";
 import { StatusView } from "./views/StatusView";
 
 type PopupView = "status" | "queue" | "about";
-
-const MOCK_SESSION_STORAGE_KEY = "iwatched-scrobbler/mock-session";
 
 function formatLastSeen(snapshot: PopupSnapshot): string {
   const diffSeconds = Math.max(0, Math.round((Date.now() - snapshot.refreshedAt) / 1000));
@@ -20,25 +21,54 @@ function formatLastSeen(snapshot: PopupSnapshot): string {
 
 export default function App() {
   const [view, setView] = useState<PopupView>("status");
-  const [mockConnected, setMockConnected] = useState(true);
   const { snapshot, isRefreshing } = usePopupSnapshot();
+  const {
+    session,
+    isRefreshing: isSessionRefreshing,
+    openIWatched,
+    openLogin,
+    openLogout
+  } = useIWatchedSession();
+  const {
+    items: reviewQueueItems,
+    queueCount,
+    isLoading: isQueueLoading,
+    dismissItem
+  } = useReviewQueue();
 
-  useEffect(() => {
-    const stored = window.localStorage.getItem(MOCK_SESSION_STORAGE_KEY);
-    if (stored === "0") {
-      setMockConnected(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(MOCK_SESSION_STORAGE_KEY, mockConnected ? "1" : "0");
-  }, [mockConnected]);
-
-  const displayName = mockConnected ? snapshot.session.displayName : "Extension Guest";
-  const handle = mockConnected ? snapshot.session.handle : "Sign in to sync later";
+  const displayName = session.authenticated
+    ? (session.user?.username || "iWatched User")
+    : "Not signed in";
+  const handle = session.authenticated
+    ? `${session.user?.handle || "@iwatched"} · ${session.user?.plan || "free"} plan`
+    : "Connect the extension to iWatched";
+  const sessionBadge = session.authenticated
+    ? "Connection active"
+    : session.status === "loading"
+      ? "Checking connection"
+      : session.status === "error"
+        ? "Connection unavailable"
+        : "Sign in required";
   const subtitle = snapshot.activeSite.supported
     ? `${snapshot.activeSite.siteLabel} active - ${formatLastSeen(snapshot)}`
-    : `Waiting for Prime - ${formatLastSeen(snapshot)}`;
+    : `Waiting for Prime or Plex - ${formatLastSeen(snapshot)}`;
+  const sessionCopy = session.authenticated
+    ? `${session.user?.handle || "@iwatched"} is ready for watched, scrobble, and review sync.`
+    : session.status === "error"
+      ? "The popup could not validate its iWatched connection right now."
+      : "Sign in to connect this extension so watched, scrobble, and review sync can start.";
+
+  if (!session.authenticated) {
+    return (
+      <main className="popup-shell popup-shell--signed-out">
+        <SignInView
+          snapshot={snapshot}
+          session={session}
+          onSignIn={openLogin}
+        />
+      </main>
+    );
+  }
 
   return (
     <main className="popup-shell">
@@ -50,15 +80,14 @@ export default function App() {
           </div>
 
           <div className="hero-card__top-actions">
-            <span className="hero-card__badge">
-              {mockConnected ? "Mock connected" : "Signed out"}
-            </span>
+            <span className="hero-card__badge">{sessionBadge}</span>
             <AccountMenu
-              connected={mockConnected}
+              connected={session.authenticated}
               displayName={displayName}
               handle={handle}
-              onSignIn={() => setMockConnected(true)}
-              onLogOut={() => setMockConnected(false)}
+              onOpenIWatched={openIWatched}
+              onSignIn={openLogin}
+              onLogOut={openLogout}
             />
           </div>
         </div>
@@ -66,29 +95,45 @@ export default function App() {
         <div className="hero-card__session">
           <div>
             <p className="hero-card__session-label">
-              {mockConnected ? "Signed in for UI work" : "Local preview mode"}
+              {session.authenticated ? "Connected iWatched account" : "Extension connection"}
             </p>
             <strong>{displayName}</strong>
             <span>{handle}</span>
           </div>
 
-          <span className={`hero-card__pulse ${isRefreshing ? "is-live" : ""}`}>
-            {mockConnected
-              ? (isRefreshing ? "refreshing" : "connected")
-              : "detector only"}
+          <span className={`hero-card__pulse ${isRefreshing || isSessionRefreshing ? "is-live" : ""}`}>
+            {isRefreshing || isSessionRefreshing
+              ? "syncing"
+              : session.authenticated
+                ? "connected"
+                : "local only"}
           </span>
         </div>
 
-        <p className="hero-card__copy">{subtitle}</p>
+        <p className="hero-card__copy">{subtitle}. {sessionCopy}</p>
       </header>
 
       <section className="view-shell">
-        {view === "status" && <StatusView snapshot={snapshot} />}
-        {view === "queue" && <QueueView snapshot={snapshot} />}
-        {view === "about" && <DisclaimerView snapshot={snapshot} />}
+        {view === "status" && (
+          <StatusView
+            snapshot={snapshot}
+            session={session}
+            onRequireSignIn={openLogin}
+          />
+        )}
+        {view === "queue" && (
+          <QueueView
+            session={session}
+            onRequireSignIn={openLogin}
+            items={reviewQueueItems}
+            isLoading={isQueueLoading}
+            onDismiss={dismissItem}
+          />
+        )}
+        {view === "about" && <DisclaimerView snapshot={snapshot} session={session} />}
       </section>
 
-      <BottomNav activeView={view} onChange={setView} />
+      <BottomNav activeView={view} onChange={setView} queueCount={queueCount} />
     </main>
   );
 }

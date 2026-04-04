@@ -3,17 +3,22 @@ import type {
   IWatchedMatchType,
   SiteDetectionState
 } from "../types/popup-state";
+import { DEFAULT_IWATCHED_BASE_URL } from "@iwatched-scrobbler/api-client";
 
-const IWATCHED_BASE_URL = "https://iwatched.app";
+const IWATCHED_BASE_URL = DEFAULT_IWATCHED_BASE_URL;
 
 interface SearchMovieItem {
   id: number;
   title: string;
+  original_title?: string | null;
+  release_date?: string | null;
 }
 
 interface SearchShowItem {
   id: number;
   name: string;
+  original_name?: string | null;
+  first_air_date?: string | null;
 }
 
 interface SearchPayload {
@@ -30,20 +35,57 @@ interface MatchResult {
 interface ResolvedTarget {
   iwatchedUrl: string | null;
   iwatchedMatchType: IWatchedMatchType;
+  iwatchedTmdbId: string | null;
+  iwatchedTargetType: SiteDetectionState["iwatchedTargetType"];
 }
 
 function normalizeTitle(value?: string | null): string {
-  return String(value || "")
+  const normalized = String(value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\b(the|a|an)\b/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\b(the|a|an)\b/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  return normalized;
 }
 
 function createSearchUrl(query: string): string {
   return `${IWATCHED_BASE_URL}/search?q=${encodeURIComponent(query)}`;
+}
+
+function uniqueValues(values: Array<string | null | undefined>): string[] {
+  return values
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, all) => all.indexOf(value) === index);
+}
+
+function extractYear(value?: string | null): number | null {
+  const match = String(value || "").match(/\b(19|20)\d{2}\b/);
+  if (!match) return null;
+
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function buildQueryVariants(site: SiteDetectionState): string[] {
+  const primary = site.mediaType === "show"
+    ? (site.seriesTitle || site.detectedTitle)
+    : site.detectedTitle;
+  const compactPrimary = primary
+    ? primary.replace(/\s*[:\-]\s*season\s+\d+.*$/i, "").trim()
+    : null;
+
+  return uniqueValues([
+    primary,
+    compactPrimary,
+    site.seriesTitle,
+    site.detectedTitle
+  ]);
 }
 
 function scoreTitleMatch(query: string, candidate: string): number {
@@ -54,63 +96,93 @@ function scoreTitleMatch(query: string, candidate: string): number {
   if (normalizedQuery === normalizedCandidate) return 100;
   if (normalizedCandidate.startsWith(normalizedQuery)) return 92;
   if (normalizedQuery.startsWith(normalizedCandidate)) return 88;
-  if (normalizedCandidate.includes(normalizedQuery)) return 76;
-  if (normalizedQuery.includes(normalizedCandidate)) return 68;
+  if (normalizedCandidate.includes(normalizedQuery)) return 80;
+  if (normalizedQuery.includes(normalizedCandidate)) return 72;
 
   const queryTokens = normalizedQuery.split(" ");
   const candidateTokens = normalizedCandidate.split(" ");
   const overlap = queryTokens.filter((token) => candidateTokens.includes(token)).length;
   if (!overlap) return 0;
 
-  return Math.round((overlap / Math.max(queryTokens.length, candidateTokens.length)) * 50);
+  return Math.round((overlap / Math.max(queryTokens.length, candidateTokens.length)) * 58);
 }
 
-function matchMovie(query: string, movies: SearchMovieItem[]): MatchResult | null {
+function scoreYearMatch(expectedYear: number | null, candidateYear: number | null): number {
+  if (!expectedYear || !candidateYear) return 0;
+  if (expectedYear === candidateYear) return 12;
+  if (Math.abs(expectedYear - candidateYear) === 1) return 4;
+  return -10;
+}
+
+function scoreCandidate(
+  query: string,
+  titles: string[],
+  expectedYear: number | null,
+  candidateYear: number | null
+): number {
+  const titleScore = titles.reduce((best, title) => Math.max(best, scoreTitleMatch(query, title)), 0);
+  return titleScore + scoreYearMatch(expectedYear, candidateYear);
+}
+
+function selectBestMatch(
+  scored: MatchResult[],
+  totalCandidates: number
+): MatchResult | null {
+  const best = scored[0] || null;
+  if (!best) return null;
+
+  if (best.score >= 66) return best;
+  if (totalCandidates === 1 && best.score >= 46) return best;
+
+  const second = scored[1];
+  if (!second && best.score >= 56) return best;
+  if (second && best.score >= 58 && best.score - second.score >= 12) {
+    return best;
+  }
+
+  return null;
+}
+
+function matchMovie(
+  query: string,
+  expectedYear: number | null,
+  movies: SearchMovieItem[]
+): MatchResult | null {
   const scored = movies
     .map((movie) => ({
       id: movie.id,
-      score: scoreTitleMatch(query, movie.title),
+      score: scoreCandidate(
+        query,
+        uniqueValues([movie.title, movie.original_title]),
+        expectedYear,
+        extractYear(movie.release_date)
+      ),
       type: "movie" as const
     }))
     .sort((left, right) => right.score - left.score);
 
-  const best = scored[0] || null;
-  if (!best) return null;
-
-  if (best.score >= 60) return best;
-  if (movies.length === 1 && best.score >= 30) return best;
-
-  const second = scored[1];
-  if (!second && best.score >= 45) return best;
-  if (second && best.score >= 52 && best.score - second.score >= 14) {
-    return best;
-  }
-
-  return null;
+  return selectBestMatch(scored, movies.length);
 }
 
-function matchShow(query: string, shows: SearchShowItem[]): MatchResult | null {
+function matchShow(
+  query: string,
+  expectedYear: number | null,
+  shows: SearchShowItem[]
+): MatchResult | null {
   const scored = shows
     .map((show) => ({
       id: show.id,
-      score: scoreTitleMatch(query, show.name),
+      score: scoreCandidate(
+        query,
+        uniqueValues([show.name, show.original_name]),
+        expectedYear,
+        extractYear(show.first_air_date)
+      ),
       type: "show" as const
     }))
     .sort((left, right) => right.score - left.score);
 
-  const best = scored[0] || null;
-  if (!best) return null;
-
-  if (best.score >= 60) return best;
-  if (shows.length === 1 && best.score >= 30) return best;
-
-  const second = scored[1];
-  if (!second && best.score >= 45) return best;
-  if (second && best.score >= 52 && best.score - second.score >= 14) {
-    return best;
-  }
-
-  return null;
+  return selectBestMatch(scored, shows.length);
 }
 
 function buildResolvedUrl(site: SiteDetectionState, match: MatchResult): string {
@@ -129,18 +201,6 @@ function buildResolvedUrl(site: SiteDetectionState, match: MatchResult): string 
   return `${IWATCHED_BASE_URL}/shows/${match.id}`;
 }
 
-function resolveQuery(site: SiteDetectionState): string | null {
-  if (site.mediaType === "show") {
-    return site.seriesTitle || site.detectedTitle;
-  }
-
-  if (site.mediaType === "movie") {
-    return site.detectedTitle;
-  }
-
-  return site.seriesTitle || site.detectedTitle;
-}
-
 function preferShow(site: SiteDetectionState): boolean {
   return (
     site.mediaType === "show" ||
@@ -152,61 +212,112 @@ function preferShow(site: SiteDetectionState): boolean {
 }
 
 function createFallback(site: SiteDetectionState): ResolvedTarget {
-  const query = resolveQuery(site);
+  const [query] = buildQueryVariants(site);
   if (!query) {
     return {
       iwatchedUrl: null,
-      iwatchedMatchType: "none"
+      iwatchedMatchType: "none",
+      iwatchedTmdbId: null,
+      iwatchedTargetType: null
     };
   }
 
   return {
     iwatchedUrl: createSearchUrl(query),
-    iwatchedMatchType: "search"
+    iwatchedMatchType: "search",
+    iwatchedTmdbId: null,
+    iwatchedTargetType: null
   };
 }
 
+async function fetchSearchPayload(query: string, year: number | null): Promise<SearchPayload | null> {
+  const params = new URLSearchParams({
+    q: query,
+    limit: "6"
+  });
+
+  if (year) {
+    params.set("year", String(year));
+  }
+
+  const response = await fetch(`${IWATCHED_BASE_URL}/api/v1/search?${params.toString()}`);
+  if (!response.ok) return null;
+
+  return (await response.json()) as SearchPayload;
+}
+
+function resolvePayloadMatch(site: SiteDetectionState, query: string, payload: SearchPayload): MatchResult | null {
+  const movies = Array.isArray(payload.movies) ? payload.movies : [];
+  const shows = Array.isArray(payload.shows) ? payload.shows : [];
+  const expectedYear = site.releaseYear ?? null;
+
+  if (site.mediaType === "movie") {
+    return matchMovie(query, expectedYear, movies);
+  }
+
+  if (site.mediaType === "show") {
+    return matchShow(query, expectedYear, shows);
+  }
+
+  const movieMatch = matchMovie(query, expectedYear, movies);
+  const showMatch = matchShow(query, expectedYear, shows);
+  if (preferShow(site)) {
+    return showMatch || movieMatch;
+  }
+
+  if (movieMatch && showMatch) {
+    return movieMatch.score === showMatch.score
+      ? null
+      : (movieMatch.score > showMatch.score ? movieMatch : showMatch);
+  }
+
+  return movieMatch || showMatch;
+}
+
 export async function resolveIWatchedTarget(site: SiteDetectionState): Promise<ResolvedTarget> {
-  const query = resolveQuery(site);
-  if (!query) return createFallback(site);
+  const queries = buildQueryVariants(site);
+  if (!queries.length) return createFallback(site);
 
   try {
-    const response = await fetch(
-      `${IWATCHED_BASE_URL}/api/v1/search?q=${encodeURIComponent(query)}&limit=6`
-    );
-
-    if (!response.ok) return createFallback(site);
-
-    const payload = (await response.json()) as SearchPayload;
-    const movies = Array.isArray(payload.movies) ? payload.movies : [];
-    const shows = Array.isArray(payload.shows) ? payload.shows : [];
-
-    let match: MatchResult | null = null;
-
-    if (site.mediaType === "movie") {
-      match = matchMovie(query, movies);
-    } else if (site.mediaType === "show") {
-      match = matchShow(query, shows);
-    } else {
-      const movieMatch = matchMovie(query, movies);
-      const showMatch = matchShow(query, shows);
-      if (preferShow(site)) {
-        match = showMatch || movieMatch;
-      } else if (movieMatch && showMatch) {
-        match = movieMatch.score === showMatch.score
-          ? null
-          : (movieMatch.score > showMatch.score ? movieMatch : showMatch);
-      } else {
-        match = movieMatch || showMatch;
+    for (const query of queries) {
+      const withYear = await fetchSearchPayload(query, site.releaseYear ?? null);
+      const withYearMatch = withYear ? resolvePayloadMatch(site, query, withYear) : null;
+      if (withYearMatch) {
+        return {
+          iwatchedUrl: buildResolvedUrl(site, withYearMatch),
+          iwatchedMatchType: "resolved",
+          iwatchedTmdbId: String(withYearMatch.id),
+          iwatchedTargetType:
+            withYearMatch.type === "movie"
+              ? "movie"
+              : site.episodeNumber != null
+                ? "episode"
+                : site.seasonNumber != null
+                  ? "season"
+                  : "show"
+        };
       }
+
+      const withoutYear = site.releaseYear ? await fetchSearchPayload(query, null) : withYear;
+      const fallbackMatch = withoutYear ? resolvePayloadMatch(site, query, withoutYear) : null;
+      if (!fallbackMatch) continue;
+
+      return {
+        iwatchedUrl: buildResolvedUrl(site, fallbackMatch),
+        iwatchedMatchType: "resolved",
+        iwatchedTmdbId: String(fallbackMatch.id),
+        iwatchedTargetType:
+          fallbackMatch.type === "movie"
+            ? "movie"
+            : site.episodeNumber != null
+              ? "episode"
+              : site.seasonNumber != null
+                ? "season"
+                : "show"
+      };
     }
 
-    if (!match) return createFallback(site);
-
-    return {
-      iwatchedUrl: buildResolvedUrl(site, match),
-      iwatchedMatchType: "resolved"
-    };
+    return createFallback(site);
   } catch (_) {
     return createFallback(site);
   }

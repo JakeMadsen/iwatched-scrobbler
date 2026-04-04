@@ -5,10 +5,17 @@ export default defineConfig({
   manifest: {
     name: "iWatched Scrobbler",
     description: "Preview build of the iWatched scrobbler browser extension.",
-    permissions: ["storage", "tabs", "scripting"],
+    permissions: ["alarms", "identity", "storage", "tabs", "scripting"],
     host_permissions: [
       "https://www.primevideo.com/*",
       "https://www.amazon.com/gp/video/*",
+      "https://app.plex.tv/*",
+      "https://watch.plex.tv/*",
+      "https://*.plex.direct/*",
+      "http://localhost/*",
+      "https://localhost/*",
+      "http://127.0.0.1/*",
+      "https://127.0.0.1/*",
       "https://iwatched.app/*"
     ],
     icons: {
