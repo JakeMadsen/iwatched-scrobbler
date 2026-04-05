@@ -1,8 +1,13 @@
+import { browser } from "wxt/browser";
+
 import { useState } from "react";
 
+import { IWATCHED_BASE_URL } from "../../lib/iwatched/client";
 import type { PopupSnapshot } from "../../lib/types/popup-state";
 import { AccountMenu } from "./components/AccountMenu";
 import { BottomNav } from "./components/BottomNav";
+import { UpdateNotice } from "./components/UpdateNotice";
+import { useExtensionUpdateState } from "./hooks/useExtensionUpdateState";
 import { useIWatchedSession } from "./hooks/useIWatchedSession";
 import { usePopupSnapshot } from "./hooks/usePopupSnapshot";
 import { useReviewQueue } from "./hooks/useReviewQueue";
@@ -22,6 +27,7 @@ function formatLastSeen(snapshot: PopupSnapshot): string {
 export default function App() {
   const [view, setView] = useState<PopupView>("status");
   const { snapshot, isRefreshing } = usePopupSnapshot();
+  const { updateState, hasUpdateAvailable } = useExtensionUpdateState();
   const {
     session,
     isRefreshing: isSessionRefreshing,
@@ -57,10 +63,14 @@ export default function App() {
     : session.status === "error"
       ? "The popup could not validate its iWatched connection right now."
       : "Sign in to connect this extension so watched, scrobble, and review sync can start.";
+  const openUpdatePage = () => browser.tabs.create({
+    url: updateState.detailsUrl || `${IWATCHED_BASE_URL}/scrobbler#downloads`
+  });
 
   if (!session.authenticated) {
     return (
-      <main className="popup-shell popup-shell--signed-out">
+      <main className={`popup-shell popup-shell--signed-out ${hasUpdateAvailable ? "popup-shell--stacked" : ""}`.trim()}>
+        <UpdateNotice updateState={updateState} onOpenUpdate={openUpdatePage} />
         <SignInView
           snapshot={snapshot}
           session={session}
@@ -114,6 +124,9 @@ export default function App() {
       </header>
 
       <section className="view-shell">
+        {hasUpdateAvailable && (
+          <UpdateNotice updateState={updateState} onOpenUpdate={openUpdatePage} />
+        )}
         {view === "status" && (
           <StatusView
             snapshot={snapshot}

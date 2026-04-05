@@ -17,7 +17,7 @@ export const IWATCHED_BASE_URL = DEFAULT_IWATCHED_BASE_URL;
 export const iwatchedApi = createIWatchedApiClient({
   baseUrl: IWATCHED_BASE_URL,
   defaultCredentials: "omit",
-  getAccessToken: () => ensureValidAccessToken(false)
+  getAccessToken: (forceRefresh = false) => ensureValidAccessToken(forceRefresh)
 });
 
 export function buildApiTarget(site: SiteDetectionState): TargetInput | null {

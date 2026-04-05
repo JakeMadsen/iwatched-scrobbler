@@ -4,14 +4,12 @@ import { browser } from "wxt/browser";
 import type { SessionResponse, SessionUser } from "@iwatched-scrobbler/api-client";
 
 import {
+  AUTH_STORAGE_KEY,
   disconnectExtensionConnection,
-  getStoredConnection,
+  getStoredConnectionSession,
   IWATCHED_BASE_URL,
   startExtensionConnection
 } from "../../../lib/iwatched/auth";
-import { iwatchedApi } from "../../../lib/iwatched/client";
-
-const REFRESH_MS = 15_000;
 
 export interface PopupSessionState {
   status: "loading" | "authenticated" | "unauthenticated" | "error";
@@ -35,25 +33,26 @@ async function openIWatchedPath(path = "/"): Promise<void> {
   await browser.tabs.create({ url: `${IWATCHED_BASE_URL}${path}` });
 }
 
-function toSessionState(payload: SessionResponse): PopupSessionState {
-  if (payload && payload.authenticated && payload.user) {
+async function readPopupSessionState(forceRefresh = false): Promise<PopupSessionState> {
+  const storedSession = await getStoredConnectionSession(forceRefresh);
+  if (!storedSession) {
     return {
-      status: "authenticated",
-      authenticated: true,
-      user: payload.user,
-      capabilities: payload.capabilities || null,
+      status: "unauthenticated",
+      authenticated: false,
+      user: null,
+      capabilities: null,
       error: null,
       lastCheckedAt: Date.now()
     };
   }
 
   return {
-    status: "unauthenticated",
-    authenticated: false,
-    user: null,
-    capabilities: payload.capabilities || null,
+    status: "authenticated",
+    authenticated: true,
+    user: storedSession.user,
+    capabilities: storedSession.capabilities,
     error: null,
-    lastCheckedAt: Date.now()
+    lastCheckedAt: storedSession.lastCheckedAt
   };
 }
 
@@ -61,32 +60,17 @@ export function useIWatchedSession() {
   const [session, setSession] = useState<PopupSessionState>(initialSessionState);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const mountedRef = useRef(true);
-  const refreshRef = useRef<(() => Promise<void>) | null>(null);
+  const refreshRef = useRef<((forceRefresh?: boolean) => Promise<void>) | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
 
-    const refresh = async () => {
+    const refresh = async (forceRefresh = false) => {
       if (mountedRef.current) setIsRefreshing(true);
 
       try {
-        const stored = await getStoredConnection();
-        if (!stored) {
-          if (!mountedRef.current) return;
-          setSession({
-            status: "unauthenticated",
-            authenticated: false,
-            user: null,
-            capabilities: null,
-            error: null,
-            lastCheckedAt: Date.now()
-          });
-          return;
-        }
-
-        const response = await iwatchedApi.getSession();
         if (!mountedRef.current) return;
-        setSession(toSessionState(response));
+        setSession(await readPopupSessionState(forceRefresh));
       } catch (error) {
         if (!mountedRef.current) return;
         setSession({
@@ -106,15 +90,22 @@ export function useIWatchedSession() {
     };
 
     refreshRef.current = refresh;
-    void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, REFRESH_MS);
+    void refresh(false);
+
+    const handleStorageChange = (
+      changes: Record<string, browser.storage.StorageChange>,
+      areaName: string
+    ) => {
+      if (areaName !== "local" || !changes[AUTH_STORAGE_KEY]) return;
+      void refresh(false);
+    };
+
+    browser.storage.onChanged.addListener(handleStorageChange);
 
     return () => {
       mountedRef.current = false;
       refreshRef.current = null;
-      window.clearInterval(timer);
+      browser.storage.onChanged.removeListener(handleStorageChange);
     };
   }, []);
 
@@ -126,7 +117,7 @@ export function useIWatchedSession() {
       try {
         await startExtensionConnection();
         if (refreshRef.current) {
-          await refreshRef.current();
+          await refreshRef.current(true);
         }
       } catch (error) {
         if (mountedRef.current) {

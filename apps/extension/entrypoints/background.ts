@@ -13,10 +13,22 @@ import {
   MESSAGE_MARK_ACTIVE_PLAYBACK_SCROBBLED
 } from "../lib/extension/messages";
 import { createPopupSnapshot } from "../lib/extension/mock-session";
-import { AUTH_STORAGE_KEY, getStoredConnection } from "../lib/iwatched/auth";
+import {
+  AUTH_STORAGE_KEY,
+  getStoredConnection,
+  getStoredConnectionSession
+} from "../lib/iwatched/auth";
 import { buildScrobbleInput, IWATCHED_BASE_URL, iwatchedApi } from "../lib/iwatched/client";
 import { enqueueReviewFromSite } from "../lib/iwatched/review-queue";
 import { resolveIWatchedTarget } from "../lib/iwatched/resolve-target";
+import {
+  createDefaultExtensionUpdateState,
+  isExtensionUpdateStateStale,
+  isVersionOutdated,
+  normalizeVersionLabel,
+  readExtensionUpdateState,
+  writeExtensionUpdateState
+} from "../lib/iwatched/update-state";
 import type { SiteDetectionState } from "../lib/types/popup-state";
 
 interface SiteAdapter {
@@ -33,6 +45,11 @@ interface AutoScrobbleState {
   updatedAt: number;
 }
 
+interface ActionWarning {
+  title: string;
+  color: string;
+}
+
 type AutoScrobbleStateMap = Record<string, AutoScrobbleState>;
 
 const resolvedTargetCache = new Map<
@@ -43,17 +60,23 @@ const autoScrobbleInFlight = new Set<string>();
 
 const SESSION_STATUS_ALARM = "iwatched/session-status";
 const PLAYBACK_SYNC_ALARM = "iwatched/playback-sync";
+const EXTENSION_UPDATE_ALARM = "iwatched/extension-update";
 const SESSION_CHECK_INTERVAL_MINUTES = 1;
 const PLAYBACK_SYNC_INTERVAL_MINUTES = 0.5;
+const EXTENSION_UPDATE_INTERVAL_MINUTES = 24 * 60;
 const SESSION_CHECK_COOLDOWN_MS = 30_000;
 const DEFAULT_ACTION_TITLE = "iWatched Scrobbler";
 const SIGNED_OUT_BADGE_TEXT = "!";
 const AUTO_SCROBBLE_STATE_STORAGE_KEY = "iwatched/auto-scrobble-state";
 const AUTO_SCROBBLE_STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const AUTO_SCROBBLE_REWIND_GRACE_SECONDS = 120;
+const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.0";
+const UPDATE_WARNING_COLOR = "#b54708";
 
 let lastSessionCheckAt = 0;
 let sessionRefreshPromise: Promise<void> | null = null;
+let sessionActionWarning: ActionWarning | null = null;
+let updateActionWarning: ActionWarning | null = null;
 
 const siteAdapters: SiteAdapter[] = [
   {
@@ -200,6 +223,16 @@ async function applyActionWarning(title: string, color: string) {
   ]);
 }
 
+async function syncActionWarning() {
+  const warning = sessionActionWarning || updateActionWarning;
+  if (!warning) {
+    await clearActionWarning();
+    return;
+  }
+
+  await applyActionWarning(warning.title, warning.color);
+}
+
 function ensureSessionAlarm() {
   browser.alarms.create(SESSION_STATUS_ALARM, {
     periodInMinutes: SESSION_CHECK_INTERVAL_MINUTES
@@ -212,6 +245,29 @@ function ensurePlaybackAlarm() {
   });
 }
 
+function ensureExtensionUpdateAlarm() {
+  browser.alarms.create(EXTENSION_UPDATE_ALARM, {
+    periodInMinutes: EXTENSION_UPDATE_INTERVAL_MINUTES
+  });
+}
+
+function absolutizeIWatchedUrl(pathOrUrl?: string | null): string | null {
+  const value = String(pathOrUrl || "").trim();
+  if (!value) return null;
+
+  try {
+    return new URL(value, IWATCHED_BASE_URL).toString();
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildUpdateWarningTitle(latestVersion: string | null): string {
+  return latestVersion
+    ? `Update available: install iWatched Scrobbler ${latestVersion} to stay current.`
+    : "Update available: install the latest iWatched Scrobbler build.";
+}
+
 async function refreshSessionIndicator(force = false): Promise<void> {
   const now = Date.now();
   if (!force && sessionRefreshPromise) return sessionRefreshPromise;
@@ -220,27 +276,92 @@ async function refreshSessionIndicator(force = false): Promise<void> {
   lastSessionCheckAt = now;
   sessionRefreshPromise = (async () => {
     try {
-      const session = await iwatchedApi.getSession();
+      const session = await getStoredConnectionSession(false);
       if (session && session.authenticated) {
-        await clearActionWarning();
+        sessionActionWarning = null;
+        await syncActionWarning();
         return;
       }
 
-      await applyActionWarning(
-        "Sign in required: the extension is not connected to iWatched, so new watches will not sync.",
-        "#b42318"
-      );
+      sessionActionWarning = {
+        title: "Sign in required: the extension is not connected to iWatched, so new watches will not sync.",
+        color: "#b42318"
+      };
+      await syncActionWarning();
     } catch (_) {
-      await applyActionWarning(
-        "Attention needed: the extension could not verify its iWatched connection.",
-        "#b54708"
-      );
+      sessionActionWarning = {
+        title: "Attention needed: the extension could not verify its iWatched connection.",
+        color: "#b54708"
+      };
+      await syncActionWarning();
     } finally {
       sessionRefreshPromise = null;
     }
   })();
 
   return sessionRefreshPromise;
+}
+
+async function refreshExtensionUpdateState(force = false): Promise<void> {
+  const existingState = await readExtensionUpdateState(CURRENT_EXTENSION_VERSION);
+  const shouldReuseCachedState = !force
+    && existingState.currentVersion === CURRENT_EXTENSION_VERSION
+    && !isExtensionUpdateStateStale(existingState);
+
+  if (shouldReuseCachedState) {
+    updateActionWarning = existingState.status === "update_available"
+      ? {
+          title: buildUpdateWarningTitle(existingState.latestVersion),
+          color: UPDATE_WARNING_COLOR
+        }
+      : null;
+    await syncActionWarning();
+    return;
+  }
+
+  try {
+    const release = await iwatchedApi.getPublicClientRelease("browser");
+    const latestVersion = normalizeVersionLabel(release.version || "");
+    const updateAvailable = !!release.available && isVersionOutdated(CURRENT_EXTENSION_VERSION, latestVersion);
+    const nextState = {
+      status: updateAvailable ? "update_available" : "current",
+      currentVersion: CURRENT_EXTENSION_VERSION,
+      latestVersion: latestVersion || null,
+      checkedAt: Date.now(),
+      detailsUrl: absolutizeIWatchedUrl(release.details_url || "/scrobbler#downloads"),
+      downloadUrl: absolutizeIWatchedUrl(release.download_url || null),
+      message: updateAvailable
+        ? `Version ${latestVersion || release.version} is available on iWatched.`
+        : null
+    } as const;
+
+    await writeExtensionUpdateState(nextState);
+    updateActionWarning = updateAvailable
+      ? {
+          title: buildUpdateWarningTitle(nextState.latestVersion),
+          color: UPDATE_WARNING_COLOR
+        }
+      : null;
+    await syncActionWarning();
+  } catch (_) {
+    const fallbackState = existingState.status === "update_available"
+      ? existingState
+      : {
+          ...createDefaultExtensionUpdateState(CURRENT_EXTENSION_VERSION),
+          status: "error" as const,
+          checkedAt: Date.now(),
+          message: "Could not check for the latest extension build."
+        };
+
+    await writeExtensionUpdateState(fallbackState);
+    updateActionWarning = fallbackState.status === "update_available"
+      ? {
+          title: buildUpdateWarningTitle(fallbackState.latestVersion),
+          color: UPDATE_WARNING_COLOR
+        }
+      : null;
+    await syncActionWarning();
+  }
 }
 
 async function readAutoScrobbleStateMap(): Promise<AutoScrobbleStateMap> {
@@ -420,20 +541,26 @@ async function maybeAutoScrobbleActivePlayback(): Promise<void> {
 export default defineBackground(() => {
   ensureSessionAlarm();
   ensurePlaybackAlarm();
+  ensureExtensionUpdateAlarm();
   void refreshSessionIndicator(true);
+  void refreshExtensionUpdateState(false);
   void maybeAutoScrobbleActivePlayback();
 
   browser.runtime.onInstalled.addListener(() => {
     ensureSessionAlarm();
     ensurePlaybackAlarm();
+    ensureExtensionUpdateAlarm();
     void refreshSessionIndicator(true);
+    void refreshExtensionUpdateState(true);
     void maybeAutoScrobbleActivePlayback();
   });
 
   browser.runtime.onStartup.addListener(() => {
     ensureSessionAlarm();
     ensurePlaybackAlarm();
+    ensureExtensionUpdateAlarm();
     void refreshSessionIndicator(true);
+    void refreshExtensionUpdateState(false);
     void maybeAutoScrobbleActivePlayback();
   });
 
@@ -453,6 +580,11 @@ export default defineBackground(() => {
 
     if (alarm.name === PLAYBACK_SYNC_ALARM) {
       void maybeAutoScrobbleActivePlayback();
+      return;
+    }
+
+    if (alarm.name === EXTENSION_UPDATE_ALARM) {
+      void refreshExtensionUpdateState(false);
     }
   });
 
@@ -478,7 +610,6 @@ export default defineBackground(() => {
     if (message.type === MESSAGE_GET_POPUP_SNAPSHOT) {
       void (async () => {
         try {
-          void refreshSessionIndicator(false);
           const activeTab = await getActiveTab();
           const url = activeTab?.url || "";
           const title = activeTab?.title || "";

@@ -43,6 +43,22 @@ export interface OAuthTokenErrorResponse {
   error_description?: string;
 }
 
+export interface PublicClientReleaseResponse {
+  ok: boolean;
+  client_key: string;
+  label: string;
+  available: boolean;
+  status: string;
+  status_label: string;
+  tone: string;
+  version: string;
+  notes: string;
+  size_display: string;
+  updated_at_display: string;
+  download_url: string;
+  details_url: string;
+}
+
 export interface OAuthAuthorizationCodeInput {
   clientId: string;
   code: string;
@@ -142,7 +158,7 @@ export class IWatchedApiError extends Error {
 
 interface ClientOptions {
   baseUrl?: string;
-  getAccessToken?: (() => Promise<string | null> | string | null) | null;
+  getAccessToken?: ((forceRefresh?: boolean) => Promise<string | null> | string | null) | null;
   defaultCredentials?: RequestCredentials;
 }
 
@@ -179,21 +195,39 @@ export function createIWatchedApiClient(options: ClientOptions = {}) {
 
   async function request<T>(path: string, init?: RequestOptions): Promise<T> {
     const { allowUnauthorized = false, skipAuth = false, ...requestInit } = init || {};
-    const accessToken = !skipAuth && getAccessToken
-      ? await getAccessToken()
-      : null;
-    const response = await fetch(`${baseUrl}${path}`, {
-      credentials: accessToken ? "omit" : defaultCredentials,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...(requestInit.headers ? requestInit.headers : {})
-      },
-      ...requestInit
-    });
+    const sendRequest = async (accessToken: string | null) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        credentials: accessToken ? "omit" : defaultCredentials,
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+          ...(requestInit.headers ? requestInit.headers : {})
+        },
+        ...requestInit
+      });
 
-    const payload = await parseResponse(response);
+      return {
+        response,
+        payload: await parseResponse(response)
+      };
+    };
+
+    const initialAccessToken = !skipAuth && getAccessToken
+      ? await getAccessToken(false)
+      : null;
+
+    let { response, payload } = await sendRequest(initialAccessToken);
+
+    if (!skipAuth && initialAccessToken && response.status === 401 && getAccessToken) {
+      const refreshedAccessToken = await getAccessToken(true);
+      if (refreshedAccessToken && refreshedAccessToken !== initialAccessToken) {
+        const retried = await sendRequest(refreshedAccessToken);
+        response = retried.response;
+        payload = retried.payload;
+      }
+    }
+
     if (!response.ok) {
       if (allowUnauthorized && response.status === 401) {
         return payload as T;
@@ -256,6 +290,13 @@ export function createIWatchedApiClient(options: ClientOptions = {}) {
       return request<SessionResponse>("/api/v1/scrobbler/session", {
         method: "GET",
         allowUnauthorized: true
+      });
+    },
+
+    getPublicClientRelease(clientKey: "browser" | "desktop"): Promise<PublicClientReleaseResponse> {
+      return request<PublicClientReleaseResponse>(`/api/v1/scrobbler/releases/${clientKey}`, {
+        method: "GET",
+        skipAuth: true
       });
     },
 

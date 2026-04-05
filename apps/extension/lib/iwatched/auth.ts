@@ -4,6 +4,7 @@ import {
   createIWatchedApiClient,
   DEFAULT_IWATCHED_BASE_URL,
   type OAuthTokenResponse,
+  type SessionResponse,
   type SessionUser
 } from "@iwatched-scrobbler/api-client";
 
@@ -20,7 +21,7 @@ const REQUESTED_SCOPES = [
   "scrobble:write"
 ].join(" ");
 
-interface StoredConnectionState {
+export interface StoredConnectionState {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
@@ -118,6 +119,20 @@ function buildStoredConnectionState(payload: OAuthTokenResponse): StoredConnecti
       .filter(Boolean),
     connectionId: payload.connection_id || null,
     user: payload.user || null
+  };
+}
+
+function hasAnyScope(scopes: string[], prefix: string): boolean {
+  return scopes.some((scope) => scope === prefix || scope.startsWith(`${prefix}:`));
+}
+
+export function buildStoredConnectionCapabilities(
+  scopes: string[]
+): NonNullable<SessionResponse["capabilities"]> {
+  return {
+    watched: hasAnyScope(scopes, "watched"),
+    scrobble: scopes.includes("scrobble:write"),
+    review: hasAnyScope(scopes, "review")
   };
 }
 
@@ -271,4 +286,27 @@ export async function disconnectExtensionConnection(): Promise<void> {
 
 export async function getStoredConnection(): Promise<StoredConnectionState | null> {
   return readStoredConnection();
+}
+
+export async function getStoredConnectionSession(forceRefresh = false): Promise<{
+  authenticated: true;
+  user: SessionUser | null;
+  capabilities: NonNullable<SessionResponse["capabilities"]>;
+  lastCheckedAt: number;
+} | null> {
+  const stored = await readStoredConnection();
+  if (!stored) return null;
+
+  const accessToken = await ensureValidAccessToken(forceRefresh);
+  if (!accessToken) return null;
+
+  const latest = await readStoredConnection();
+  if (!latest) return null;
+
+  return {
+    authenticated: true,
+    user: latest.user || stored.user || null,
+    capabilities: buildStoredConnectionCapabilities(latest.scope || stored.scope || []),
+    lastCheckedAt: Date.now()
+  };
 }
