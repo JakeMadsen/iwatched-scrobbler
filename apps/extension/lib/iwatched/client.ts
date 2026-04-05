@@ -4,6 +4,7 @@ import {
   type ScrobbleInput,
   type TargetInput
 } from "@iwatched-scrobbler/api-client";
+import { browser } from "wxt/browser";
 
 import type { SiteDetectionState } from "../types/popup-state";
 import { ensureValidAccessToken } from "./auth";
@@ -14,6 +15,7 @@ interface BuildScrobbleInputOptions {
 }
 
 export const IWATCHED_BASE_URL = DEFAULT_IWATCHED_BASE_URL;
+const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.1";
 export const iwatchedApi = createIWatchedApiClient({
   baseUrl: IWATCHED_BASE_URL,
   defaultCredentials: "omit",
@@ -57,7 +59,7 @@ export function buildScrobbleInput(
     externalEventId: eventBits.join(":"),
     idempotencyKey: eventBits.join("-"),
     clientName: "iwatched-scrobbler-extension",
-    clientVersion: "0.1.0",
+    clientVersion: CURRENT_EXTENSION_VERSION,
     showTitle: site.seriesTitle || site.detectedTitle || undefined,
     seriesTitle: site.seriesTitle || undefined,
     episodeTitle: site.episodeTitle || undefined,

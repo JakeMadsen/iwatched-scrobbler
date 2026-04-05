@@ -7,7 +7,7 @@ import {
   type ExtensionUpdateState
 } from "../../../lib/iwatched/update-state";
 
-const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.0";
+const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.1";
 
 export function useExtensionUpdateState() {
   const [updateState, setUpdateState] = useState<ExtensionUpdateState>(

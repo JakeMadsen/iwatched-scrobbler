@@ -70,7 +70,7 @@ const SIGNED_OUT_BADGE_TEXT = "!";
 const AUTO_SCROBBLE_STATE_STORAGE_KEY = "iwatched/auto-scrobble-state";
 const AUTO_SCROBBLE_STATE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const AUTO_SCROBBLE_REWIND_GRACE_SECONDS = 120;
-const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.0";
+const CURRENT_EXTENSION_VERSION = browser.runtime.getManifest().version || "0.1.1";
 const UPDATE_WARNING_COLOR = "#b54708";
 
 let lastSessionCheckAt = 0;

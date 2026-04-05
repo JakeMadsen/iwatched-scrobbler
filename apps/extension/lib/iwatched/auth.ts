@@ -97,7 +97,7 @@ function parseUserAgent(userAgent: string): { browserName: string; platformName:
 function getDeviceContext(): DeviceContext {
   const userAgent = navigator.userAgent || "";
   const parsed = parseUserAgent(userAgent);
-  const clientVersion = browser.runtime.getManifest().version || "0.1.0";
+  const clientVersion = browser.runtime.getManifest().version || "0.1.1";
   const deviceName = `${parsed.browserName} on ${parsed.platformName}`.trim();
 
   return {
