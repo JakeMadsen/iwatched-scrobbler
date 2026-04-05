@@ -768,15 +768,15 @@ button {
 
 .composer-rating {
   margin-top: 10px;
-  padding: 10px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.composer-rating__summary {
-  display: grid;
-  gap: 2px;
+.composer-rating__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .composer-rating__label,
@@ -788,17 +788,21 @@ button {
 }
 
 .composer-rating__value {
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.2;
+  color: var(--muted-strong);
+  min-width: 68px;
+  white-space: nowrap;
 }
 
 .composer-rating__meta {
+  margin: 6px 0 0;
   color: var(--muted);
   font-size: 10px;
+  line-height: 1.35;
 }
 
 .composer-stars {
-  margin-top: 8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -811,8 +815,8 @@ button {
 .composer-stars__button {
   appearance: none;
   border: 0;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   background: transparent;
   color: inherit;
@@ -832,10 +836,10 @@ button {
 .composer-stars__icon {
   position: relative;
   display: block;
-  width: 24px;
-  height: 24px;
-  font-size: 20px;
-  line-height: 24px;
+  width: 20px;
+  height: 20px;
+  font-size: 18px;
+  line-height: 20px;
 }
 
 .composer-stars__empty,
@@ -855,7 +859,7 @@ button {
 }
 
 .composer-copy {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .composer-toggle {

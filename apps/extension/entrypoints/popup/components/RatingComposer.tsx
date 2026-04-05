@@ -96,6 +96,12 @@ function writeDraftMap(next: Record<string, DraftState>): void {
   }
 }
 
+function clearDraftState(draftKey: string): void {
+  const nextMap = readDraftMap();
+  delete nextMap[draftKey];
+  writeDraftMap(nextMap);
+}
+
 function subjectLabel(item: ReviewQueueItem): string {
   if (item.itemType === "movie") return "movie";
   if (item.itemType === "episode") return "episode";
@@ -251,6 +257,9 @@ export function RatingComposer({
   }, [draftKey, session.authenticated, targetKey]);
 
   const displayRating = hoverRating ?? rating;
+  const trimmedBody = body.trim();
+  const hasReviewText = trimmedBody.length > 0;
+  const canSubmit = rating > 0 || hasReviewText;
   const syncBadge = !session.authenticated
     ? "Sign in required"
     : remoteReview?.hasReview
@@ -269,12 +278,14 @@ export function RatingComposer({
       ? { tone: "neutral" as const, text: "Sign in to save this review to iWatched." }
       : remoteReview?.hasReview
         ? { tone: "neutral" as const, text: "This card is connected to your current iWatched review." }
-        : { tone: "neutral" as const, text: "Draft here first, then save when you are happy with it." };
+        : { tone: "neutral" as const, text: "Pick a rating and add text only if you want to post a full review." };
   const primaryLabel = !session.authenticated
     ? "Sign in to sync"
     : isSaving
-      ? "Saving..."
-      : "Save to iWatched";
+      ? "Posting..."
+      : hasReviewText
+        ? "Post Review"
+        : "Post Rating";
 
   const resolvePointerRating = (
     index: number,
@@ -329,8 +340,15 @@ export function RatingComposer({
       return;
     }
 
-    const trimmed = body.trim();
-    if (trimmed.length > 0 && rating <= 0) {
+    if (!canSubmit) {
+      setNotice({
+        tone: "neutral",
+        text: "Add a rating before posting this title."
+      });
+      return;
+    }
+
+    if (hasReviewText && rating <= 0) {
       setNotice({
         tone: "error",
         text: "Add a star rating before saving a written review."
@@ -340,16 +358,18 @@ export function RatingComposer({
 
     setIsSaving(true);
     setNotice(null);
+    let dismissAfterSave = false;
 
     try {
       const response = await iwatchedApi.upsertReview({
         ...target,
         rating,
-        body: trimmed
+        body: trimmedBody
       });
 
       if (response.removed) {
         dirtyRef.current = false;
+        clearDraftState(draftKey);
         setRating(0);
         setBody("");
         setRemoteReview(null);
@@ -358,15 +378,9 @@ export function RatingComposer({
           text: "Removed the review from iWatched."
         });
       } else {
-        const normalized = normalizeRemoteReview(response.review);
         dirtyRef.current = false;
-        setRemoteReview(normalized.hasReview ? normalized : null);
-        setRating(normalized.rating);
-        setBody(normalized.body);
-        setNotice({
-          tone: "success",
-          text: "Saved to iWatched."
-        });
+        clearDraftState(draftKey);
+        dismissAfterSave = true;
       }
     } catch (error) {
       setNotice({
@@ -375,6 +389,10 @@ export function RatingComposer({
       });
     } finally {
       setIsSaving(false);
+    }
+
+    if (dismissAfterSave) {
+      await onDismiss(item.id);
     }
   };
 
@@ -386,9 +404,14 @@ export function RatingComposer({
     setNotice({
       tone: "neutral",
       text: remoteReview?.hasReview
-        ? "Cleared the local draft. Save again if you want to remove or replace the live review."
+        ? "Cleared the local draft. Add a new rating or review if you want to post an update."
         : "Cleared the local draft."
     });
+  };
+
+  const handleDismiss = async () => {
+    clearDraftState(draftKey);
+    await onDismiss(item.id);
   };
 
   return (
@@ -405,7 +428,7 @@ export function RatingComposer({
             type="button"
             className="composer-card__dismiss"
             onClick={() => {
-              void onDismiss(item.id);
+              void handleDismiss();
             }}
           >
             Disregard
@@ -421,48 +444,50 @@ export function RatingComposer({
       </div>
 
       <div className="composer-rating">
-        <div className="composer-rating__summary">
-          <span className="composer-rating__label">Review rating</span>
-          <strong className="composer-rating__value">{formatRating(displayRating)}</strong>
-          <span className="composer-rating__meta">
-            {remoteReview?.hasReview
-              ? `Editing your saved ${subjectLabel(item)} review.`
-              : `Your next ${subjectLabel(item)} review can start here.`}
-          </span>
-        </div>
+        <div className="composer-rating__row">
+          <span className="composer-rating__label">Your rating</span>
 
-        <div
-          className="composer-stars"
-          role="radiogroup"
-          aria-label="Draft rating"
-          onMouseLeave={() => setHoverRating(null)}
-        >
-          {Array.from({ length: 5 }, (_, index) => {
-            const fill = starFillPercent(displayRating, index);
-            const buttonValue = index + 1;
+          <div
+            className="composer-stars"
+            role="radiogroup"
+            aria-label="Draft rating"
+            onMouseLeave={() => setHoverRating(null)}
+          >
+            {Array.from({ length: 5 }, (_, index) => {
+              const fill = starFillPercent(displayRating, index);
+              const buttonValue = index + 1;
 
-            return (
-              <button
-                key={buttonValue}
-                type="button"
-                className="composer-stars__button"
-                aria-label={`Rate ${buttonValue} star${buttonValue === 1 ? "" : "s"}`}
-                onMouseMove={(event) => setHoverRating(resolvePointerRating(index, event))}
-                onClick={(event) => {
-                  updateRating(resolvePointerRating(index, event));
-                }}
-                onKeyDown={updateRatingFromKeyboard}
-              >
-                <span className="composer-stars__icon" aria-hidden="true">
-                  <span className="composer-stars__empty">★</span>
-                  <span className="composer-stars__fill" style={{ width: `${fill}%` }}>
-                    ★
+              return (
+                <button
+                  key={buttonValue}
+                  type="button"
+                  className="composer-stars__button"
+                  aria-label={`Rate ${buttonValue} star${buttonValue === 1 ? "" : "s"}`}
+                  onMouseMove={(event) => setHoverRating(resolvePointerRating(index, event))}
+                  onClick={(event) => {
+                    updateRating(resolvePointerRating(index, event));
+                  }}
+                  onKeyDown={updateRatingFromKeyboard}
+                >
+                  <span className="composer-stars__icon" aria-hidden="true">
+                    <span className="composer-stars__empty">★</span>
+                    <span className="composer-stars__fill" style={{ width: `${fill}%` }}>
+                      ★
+                    </span>
                   </span>
-                </span>
-              </button>
-            );
-          })}
+                </button>
+              );
+            })}
+          </div>
+
+          <strong className="composer-rating__value">{formatRating(displayRating)}</strong>
         </div>
+
+        <p className="composer-rating__meta">
+          {remoteReview?.hasReview
+            ? `Editing your saved ${subjectLabel(item)} review.`
+            : `Leave the text field empty if you only want to post the rating.`}
+        </p>
       </div>
 
       <div className="composer-copy">
@@ -477,7 +502,7 @@ export function RatingComposer({
           className="composer-copy__textarea"
           rows={4}
           value={body}
-          placeholder={`Write the review you want to post for ${item.title}.`}
+          placeholder={`Write a full review for ${item.title}, or leave this blank to post the rating only.`}
           onChange={(event) => updateBody(event.target.value)}
         />
 
@@ -493,7 +518,7 @@ export function RatingComposer({
           <button
             type="button"
             className="composer-actions__button composer-actions__button--primary"
-            disabled={isSaving}
+            disabled={isSaving || (session.authenticated && !canSubmit)}
             onClick={() => {
               void handlePrimaryAction();
             }}
@@ -504,7 +529,7 @@ export function RatingComposer({
 
         <div className="composer-copy__footer">
           <p className="composer-copy__hint">
-            Drafts stay in the popup until you save them to iWatched or disregard this title.
+            Posting from here sends it to iWatched and then removes the title from Queue.
           </p>
           <span className={`composer-copy__status is-${syncStatus.tone}`}>
             {syncStatus.text}

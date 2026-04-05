@@ -8,6 +8,10 @@ interface SignInViewProps {
 }
 
 function buildCopy(snapshot: PopupSnapshot, session: PopupSessionState): string {
+  if (session.error) {
+    return session.error;
+  }
+
   if (session.status === "loading") {
     return "Checking whether this browser already has an active iWatched extension connection.";
   }
@@ -29,6 +33,7 @@ export function SignInView({ snapshot, session, onSignIn }: SignInViewProps) {
     : session.status === "error"
       ? "Connection unavailable"
       : "Signed out";
+  const buttonLabel = session.status === "error" ? "Try sign in again" : "Sign in";
 
   return (
     <section className="auth-card">
@@ -53,7 +58,7 @@ export function SignInView({ snapshot, session, onSignIn }: SignInViewProps) {
             void onSignIn();
           }}
         >
-          Sign in
+          {buttonLabel}
         </button>
       </div>
     </section>

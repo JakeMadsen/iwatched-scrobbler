@@ -99,7 +99,7 @@ The extension talks to the iWatched API through the shared API client in:
 The base URL is currently set to:
 
 ```ts
-export const DEFAULT_IWATCHED_BASE_URL = "http://localhost:3000";
+export const DEFAULT_IWATCHED_BASE_URL = "https://iwatched.app";
 ```
 
 That is ideal for local testing against a local iWatched app. Before shipping a release build, make sure this points where you expect.
